@@ -223,6 +223,9 @@ def create_bulk_schedule():
     if not schedules:
         return jsonify(success=False, message="No schedules provided"), 400
     
+    
+    skipped_missing_users = []
+    
     try:
         for item in schedules:
             user_id = item.get("user_id")
@@ -235,6 +238,16 @@ def create_bulk_schedule():
             
             if not all([user_id, shift_id, shift_date_str, location_str]):
                 raise ValueError("Missing required fields")
+            
+            
+            #validate users
+            user = User.query.get(user_id)
+            if not user:
+                skipped_missing_users.append(user_id)
+                current_app.logger.warning(
+                    f"[BULK SCHEDULE SKIPPED]: Missing user_id={user_id}, item={item}"
+                )
+                continue
             
             shift_date = date.fromisoformat(shift_date_str)
             location = LocationEnum(location_str.lower())
@@ -251,6 +264,7 @@ def create_bulk_schedule():
                     success=False, 
                     message=f"User {user_id} has approved time off on {shift_date}"
                 ), 400
+                
             
             exists = Schedule.query.filter_by(
                 user_id=user_id,
@@ -285,9 +299,16 @@ def create_bulk_schedule():
                 ).send()
         except Exception as e:
             current_app.logger.error(f"[SCHEDULE EMAIL ERROR]: {e}")
-
+            
         current_app.logger.info(f"{current_user.first_name} {current_user.last_name} has created/updated bulk schedule items.")
-        return jsonify(success=True, message="Shifts have been submitted!"), 201
+            
+        message = "Shifts have been submitted!"
+        
+        if skipped_missing_users:
+            message += f" Skipped missing user IDs: {sorted(set(skipped_missing_users))}"
+
+        
+        return jsonify(success=True, message=message, skipped_missing_users=sorted(set(skipped_missing_users))), 201
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"[BULK SCHEDULE ERROR]: {e}")
